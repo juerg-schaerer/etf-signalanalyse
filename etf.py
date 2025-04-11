@@ -389,8 +389,30 @@ with open(html_path, "w", encoding="utf-8") as f:
     </html>
     """)
 
+# Content auch in der Mail
+email_html_content = f"""
+<html>
+<head><meta charset="UTF-8"></head>
+<body>
+    <h2>📩 ETF Signalbericht für {today}</h2>
+    <p><b>Signal:</b> {signal}</p>
+    <p><i>{interpret_signal(signal)}</i></p>
+    <p><b>Ampel:</b> {ampel_html(ampel)}</p>
+    <p><i>{interpret_ampel(ampel)}</i></p>
+    <p><b>Schlusskurs:</b> {close_today:.2f} EUR<br>
+       <b>Veränderung seit gestern:</b> {format_diff(diff_abs)} ({format_diff(diff_pct, is_pct=True)})</p>
+    <h3>📊 Indikatorvergleich (heute vs. gestern)</h3>
+    {indicator_table}
+    <br>
+    <p>⚠️ Dies ist keine Anlageberatung. Siehe vollständigen <a href='https://github.com/deinuser/etf-signalanalyse/blob/main/DISCLAIMER.md'>Disclaimer</a>.</p>
+</body>
+</html>
+"""
+
+
 # Kopie des aktuellen Reports als "index.html" speichern
 index_html_path = os.path.join(HTML_DIR, "index.html")
+
 with open(index_html_path, "w", encoding="utf-8") as f_index:
     f_index.write(f"""
     <html>
@@ -464,7 +486,8 @@ def send_email(subject, body, chart_path):
     msg["Subject"] = subject
     msg["From"] = EMAIL_SENDER
     msg["To"] = EMAIL_RECEIVER
-    msg.set_content(body)
+    msg.set_content("Dies ist ein HTML-ETF-Report.")
+    msg.add_alternative(email_html_content, subtype="html")
 
     with open(chart_path, "rb") as f:
         file_data = f.read()
