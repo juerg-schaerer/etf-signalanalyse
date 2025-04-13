@@ -87,6 +87,26 @@ df["MACD"] = ema12 - ema26
 # Kreuzt nach unten → Verkaufsimpuls
 df["MACD_Signal"] = df["MACD"].ewm(span=9, adjust=False).mean()
 
+#     MA20 Moving Average
+# Der gleitende Durchschnitt (Moving Average, MA) über 20 Tage ist ein sehr beliebter technischer Indikator – auch für Trader und Anleger mit kurzfristiger bis mittelfristiger Ausrichtung
+# Was bringt dir der 20-Tage-MA konkret?
+# 1. Trendfilter für kurzfristige Marktbewegungen
+#	•	Zeigt dir, ob ein kurzfristiger Auf- oder Abwärtstrend vorliegt.
+#	•	Beispiel: Liegt der Kurs über dem 20-Tage-MA → kurzfristig bullisch.
+# 2. Unterstützungs-/Widerstandszonen
+#	•	Der MA kann als eine Art „dynamischer Widerstand“ oder „Unterstützung“ wirken.
+#	•	Viele Marktteilnehmer achten auf diesen MA → kann also selbst Bewegungen beeinflussen.
+# 3. Kreuzung mit anderen MAs (z. B. 200-Tage)
+#	•	Kreuzt der 20er über den 200-Tage-MA = Golden Cross → bullisches Signal.
+#	•	Kreuzt er darunter = Death Cross → bärisches Signal.
+# 4. Signalbestätigung
+#	•	Ergänzt RSI oder MACD:
+#	•	RSI sagt „überverkauft“?
+#	•	Liegt der Kurs aber noch deutlich unter dem 20er MA? → vielleicht abwarten.
+# Trading-Einstieg: Kurs durchbricht 20er MA von unten nach oben → Einstiegssignal.
+# Trailing Stop: Kurs fällt unter 20-Tage-MA → möglicher Ausstieg oder engerer Stopp.
+df["20_MA"] = df["Close"].rolling(window=20).mean()
+
 #     Volatilität
 #Berechnet die Standardabweichung der Schlusskurse über 14 Tage – misst die Schwankungsbreite.
 # Wird in deinem Skript verwendet, um übertriebene Bewegungen (hohes Risiko) auszuschließen.
@@ -119,12 +139,19 @@ def generate_signal(row):
             return "n/v"  # nicht verfügbar
 
 
-        if (rsi < RSI_BUY_THRESHOLD and macd > macd_sig and close > ma200 and vola < 0.03):
+        # if (rsi < RSI_BUY_THRESHOLD and macd > macd_sig and close > ma200 and vola < 0.03):
+        # Neue Logik: Dadurch werden nur starke, mehrfache Bestätigungen als BUY ausgegeben.
+        if (rsi < RSI_BUY_THRESHOLD and 
+                macd > macd_sig and 
+                close > ma200 and 
+                close > ma20 and
+                vola < VOLATILITY_THRESHOLD):    
             # BUY-Kriterium:
             # Das ist eine konservative Kaufstrategie, die nur bei günstiger Konstellation mehrerer Indikatoren ein „BUY“ liefert.
 	        # 1.	rsi < 30        → Der Markt ist überverkauft – könnte ein günstiger Einstieg sein.
 	        # 2.	macd > macd_sig → Das Momentum dreht nach oben – bestärkt den Aufwärtstrend.
 	        # 3.	close > ma200   → Langfristiger Aufwärtstrend ist intakt – keine Käufe gegen den Trend.
+            # 3.a.  close > ma20
 	        # 4.	vola < 0.03     → Der Markt ist ruhig genug – kein chaotisches Umfeld.
             return "BUY"
         elif (rsi > 70 and macd < macd_sig and close < ma200 and vola > 0.03):
@@ -152,14 +179,18 @@ def generate_signal(row):
 
 def generate_ampel(row):
     try:
-        # close = float(row["Close"])
-        close= float(row["Close"].iloc[0]) if isinstance(row["Close"], pd.Series) else float(row["Close"])
-        # ma200 = float(row["200_MA"])
-        ma200= float(row["200_MA"].iloc[0]) if isinstance(row["200_MA"], pd.Series) else float(row["200_MA"])
+        close = safe_float(row["Close"])
+        ma200 = safe_float(row["200_MA"])
+        ma20 = safe_float(row["20_MA"])
 
-        if pd.isna([close, ma200]).any():
+        if pd.isna([close, ma200, ma20]).any():
             return "grau"
-        return "grün" if close > ma200 else "rot"
+        if close > ma200 and close > ma20:
+            return "grün"
+        elif close > ma20 and close < ma200:
+            return "gelb"  # Zwischenphase: kurzfristig stark, langfristig schwach
+        else:
+            return "rot"
     except:
         return "grau"
 
@@ -202,6 +233,7 @@ fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True, gridspec_kw={
 # Kurs + MA
 ax1.plot(df.index, df["Close"], label="Close")
 ax1.plot(df.index, df["200_MA"], label="200-Tage MA", linestyle="--")
+ax1.plot(df.index, df["20_MA"], label="20-Tage MA", linestyle=":", color="orange")
 ax1.set_title(f"{TICKER} - Chart mit 200 MA")
 ax1.legend()
 ax1.grid(True)
@@ -273,6 +305,16 @@ def format_volatility(val):
     except:
         return "–"
 
+def format_close_vs_20ma(close, ma20):
+    try:
+        close = safe_float(close)
+        ma20 = safe_float(ma20)
+        if pd.isna(close) or pd.isna(ma20): return "–"
+        color = "#28a745" if close > ma20 else "#dc3545"
+        return f'<span style="color:{color};">{close:.2f}</span>'
+    except:
+        return "–"    
+
 # Wenn Schlusskurs über dem 200-Tage-MA liegt → grün, sonst rot.
 def format_close_vs_ma(close, ma):
     try:
@@ -322,6 +364,19 @@ def interpret_signal(signal):
     }
     return mapping.get(signal.upper(), "–")
 
+def interpret_close_vs_ma(close, ma, typ="lang"):
+    try:
+        close = safe_float(close)
+        ma = safe_float(ma)
+        if pd.isna(close) or pd.isna(ma): return "–"
+        if close > ma:
+            return "🟢 Kurs über {}fristigem Durchschnitt".format("kurz" if typ=="kurz" else "lang")
+        else:
+            return "🔴 Kurs unter {}fristigem Durchschnitt".format("kurz" if typ=="kurz" else "lang")
+    except:
+        return "–"
+    
+
 def interpret_ampel(ampel):
     mapping = {
         "grün": "🟢 Aufwärtstrend – Kurs über 200-Tage-Linie.",
@@ -349,6 +404,7 @@ indicator_table = f"""
     <tr><td>Volatilität</td><td>{format_volatility(prev_row['Volatility'])}</td><td>{format_volatility(latest_row['Volatility'])}</td><td>{interpret_indicator("Volatility", latest_row)}</td></tr>
     <tr><td>Schlusskurs</td><td>{format_close_vs_ma(prev_row['Close'], prev_row['200_MA'])}</td><td>{format_close_vs_ma(latest_row['Close'], latest_row['200_MA'])}</td><td>{interpret_indicator("Close", latest_row)}</td></tr>
     <tr><td>200-Tage-MA</td><td>{format_val(prev_row['200_MA'])}</td><td>{format_val(latest_row['200_MA'])}</td><td>–</td></tr>
+    <tr><td>20-Tage-MA</td><td>{format_val(prev_row['20_MA'])}</td><td>{format_val(latest_row['20_MA'])}</td><td>{interpret_close_vs_ma(latest_row["Close"], latest_row["20_MA"], "kurz")}</td></tr>
 </table>
 """
 
@@ -404,7 +460,7 @@ email_html_content = f"""
     <h3>📊 Indikatorvergleich (heute vs. gestern)</h3>
     {indicator_table}
     <br>
-    <p>⚠️ Dies ist keine Anlageberatung. Siehe vollständigen <a href='https://github.com/deinuser/etf-signalanalyse/blob/main/DISCLAIMER.md'>Disclaimer</a>.</p>
+    <p>⚠️ Dies ist keine Anlageberatung. Siehe vollständigen <a href='https://github.com/juerg-schaerer/etf-signalanalyse/blob/main/DISCLAIMER.md'>Disclaimer</a>.</p>
 </body>
 </html>
 """
